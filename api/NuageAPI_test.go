@@ -962,47 +962,59 @@ func TestVMPowerOff(t *testing.T) {
 
 //TestSplitActivation tests the split activation mode using SDK
 func TestSplitActivation(t *testing.T) {
-	domainName := "siva"
-	enterpriseName := "nuage-siva"
-	subnetName := "siva-subnet0"
-	enterpriseFetchingInfo := &bambou.FetchingInfo{Filter: "name == \"" + enterpriseName + "\""}
+	vrsConnection, err1 := NewUnixSocketConnection(UnixSocketFile)
+	if err1 != nil {
+		t.Fatal("Unable to connect to the VRS")
+	}
+	enterpriseFetchingInfo := &bambou.FetchingInfo{Filter: "name == \"" + Enterprise + "\""}
 	enterprises, err := Root.Enterprises(enterpriseFetchingInfo)
 	if err != nil || len(enterprises) == 0 {
 		t.Fatalf("%v", err)
 	}
 	enterprise := enterprises[0]
-	domainFetchingInfo := &bambou.FetchingInfo{Filter: "name == \"" + domainName + "\""}
+
+	domainFetchingInfo := &bambou.FetchingInfo{Filter: "name == \"" + Domain + "\""}
 	domains, err := enterprise.Domains(domainFetchingInfo)
 	if err != nil || len(domains) == 0 {
 		t.Fatalf("%v", err)
 	}
 	domain := domains[0]
-	subnetFetchingInfo := &bambou.FetchingInfo{Filter: "name == \"" + subnetName + "\""}
+
+	subnetFetchingInfo := &bambou.FetchingInfo{Filter: "name == \"" + Network1 + "\""}
 	subnets, err := domain.Subnets(subnetFetchingInfo)
 	if err != nil || len(subnets) == 0 {
 		t.Fatalf("%v", err)
 	}
 	subnet := subnets[0]
-	containerName := "amazing_stallman"
-	containerUUID := "fd8e7d16981975114b95b07853bc045d0ed29bb86437576f28a23e6b1a64133a"
-	vportName := "nlna-1"
-	macAddress := "a1:b2:c3:4d:5e"
-	fmt.Printf("%+v", subnet)
-	container := &vspk.Container{
-		UUID: containerUUID,
-		Name: containerName,
+
+	vportName := fmt.Sprintf("vethbr-%d", rand.New(rand.NewSource(time.Now().UnixNano())).Intn(100))
+	containerName := fmt.Sprintf("test_container_%d", rand.New(rand.NewSource(time.Now().UnixNano())).Intn(100))
+	containerUUID := strings.Replace(uuid.Generate().String(), "-", "", -1)
+	containerUUID = containerUUID + strings.Replace(uuid.Generate().String(), "-", "", -1)
+	macAddress := util.GenerateMAC()
+	// create a new vport in a subnet
+	vport := vspk.NewVPort()
+	vport.Name = vportName
+	vport.Type = "CONTAINER"
+	err = subnet.CreateVPort(vport)
+	if err != nil {
+		t.Fatalf("Creating vport failed with error: %v", err)
 	}
-	containerInterface := &vspk.ContainerInterface{
-		VPortName: vportName,
-		MAC:       macAddress,
-	}
-	err = subnet.CreateContainer(container)
+	// new container interface that matches to vport
+	containerInterface := vspk.NewContainerInterface()
+	containerInterface.Name = vportName
+	containerInterface.MAC = macAddress
+	containerInterface.VPortID = vport.ID
+	interfaceList := make([]interface{}, 1)
+	interfaceList[0] = containerInterface
+	// create a new container under a user
+	container := vspk.NewContainer()
+	container.UUID = containerUUID
+	container.Name = containerName
+	container.Interfaces = interfaceList
+	err = Root.CreateContainer(container)
 	if err != nil {
 		t.Fatalf("Creating container failed with error: %v", err)
-	}
-	err = container.CreateContainerInterface(containerInterface)
-	if err != nil {
-		t.Fatalf("Creating container interface failed with error: %v", err)
 	}
 
 	containerFetchingInfo := &bambou.FetchingInfo{Filter: "name == \"" + containerName + "\""}
@@ -1010,6 +1022,46 @@ func TestSplitActivation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fetching container list failed with err : %v", err)
 	}
+	if len(containerList) == 0 {
+		t.Fatalf("No containers found with given filter info")
+	}
+	if err = containerList[0].Save(); err != nil {
+		containerList[0].Delete()
+		vport.Delete()
+		t.Fatalf("saving updated container attributes failed with error: %v", err)
+	}
+	fmt.Printf("IP Address = %v, Mask = %v\n", containerInterface.IPAddress, containerInterface.Netmask)
 
-	fmt.Printf("%+v", containerList[0])
+	containerInfo := make(map[string]string)
+	containerInfo["name"] = containerName
+	containerInfo["mac"] = macAddress
+	containerInfo["vmuuid"] = containerUUID
+	containerInfo["brport"] = vportName
+	containerInfo["entityport"] = fmt.Sprintf("vethentity-%d", rand.New(rand.NewSource(time.Now().UnixNano())).Intn(100))
+	portList := []string{containerInfo["entityport"], containerInfo["brport"]}
+	if err := util.CreateVETHPair(portList); err != nil {
+		t.Fatal("Unable to create veth pairs on VRS")
+	}
+
+	// Add the paired veth port to alubr0 on VRS
+	if err := util.AddVETHPortToVRS(containerInfo["entityport"], containerInfo["vmuuid"], containerInfo["name"]); err != nil {
+		t.Fatal("Unable to add veth port to alubr0")
+	}
+
+	if err := createVM(vrsConnection, containerInfo, entity.Container, entity.EventCategoryStarted, entity.EventStartedBooted); err != nil {
+		t.Fatal("Unable to create a test VM")
+	}
+
+	if err := cleanup(vrsConnection, containerInfo); err != nil {
+		t.Fatalf("cleanup failed with error: %v", err)
+	}
+	err = containerList[0].Delete()
+	if err != nil {
+		t.Fatalf("Container deletion failed with error: %v", err)
+	}
+	err = vport.Delete()
+	if err != nil {
+		t.Fatalf("VPort deletion failed with error: %v", err)
+	}
+	vrsConnection.Disconnect()
 }

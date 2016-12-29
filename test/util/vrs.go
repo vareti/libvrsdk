@@ -1,10 +1,17 @@
 package util
 
 import (
+	"crypto/md5"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
-	"math/rand"
+	"io"
+	//"math/rand"
+	"net"
+	"os"
 	"os/exec"
-	"time"
+	"strconv"
+	//	"time"
 )
 
 const (
@@ -92,22 +99,62 @@ func RemoveVETHPortFromVRS(port string) error {
 	return nil
 }
 
+//// GenerateMAC will act as a pseudo random MAC generator
+//func GenerateMAC() string {
+//
+//	arr := make([]int, 6)
+//	var num int
+//	for i := 0; i < 6; i++ {
+//		for {
+//			num = rand.New(rand.NewSource(time.Now().UnixNano())).Intn(100)
+//			if num >= 10 && num <= 99 {
+//				break
+//			}
+//		}
+//
+//		arr[i] = num
+//	}
+//
+//	mac := fmt.Sprintf("%d:%d:%d:%d:%d:%d", arr[0], arr[1], arr[2], arr[3], arr[4], arr[5])
+//	return mac
+//}
+
 // GenerateMAC will act as a pseudo random MAC generator
 func GenerateMAC() string {
-
-	arr := make([]int, 6)
-	var num int
-	for i := 0; i < 6; i++ {
-		for {
-			num = rand.New(rand.NewSource(time.Now().UnixNano())).Intn(100)
-			if num >= 10 && num <= 99 {
-				break
-			}
-		}
-
-		arr[i] = num
+	errMac := "00:00:00:00:00:00"
+	hw := make(net.HardwareAddr, 6)
+	//TODO dont know if this size is sufficient to always generate a random mac
+	randbuf := make([]byte, 6)
+	h := md5.New()
+	hostname, err := os.Hostname()
+	if err != nil {
+		fmt.Printf("Getting hostname failed with error: %v", err)
+		return errMac
 	}
-
-	mac := fmt.Sprintf("%d:%d:%d:%d:%d:%d", arr[0], arr[1], arr[2], arr[3], arr[4], arr[5])
-	return mac
+	_, err = io.WriteString(h, hostname)
+	if err != nil {
+		fmt.Printf("Writing hostname to buffer failed with error: %v", err)
+		return errMac
+	}
+	hostnameHash := hex.EncodeToString(h.Sum(nil))
+	_, err = rand.Read(randbuf)
+	if err != nil {
+		fmt.Printf("Reading random number from buffer failed with error: %v", err)
+		return errMac
+	}
+	randbuf[0] = byte(int(randbuf[0])&0xFE | 0x02)
+	macString1, err := strconv.ParseInt(hostnameHash[:2], 16, 0)
+	if err != nil {
+		fmt.Printf("Parsing \"%s\" failed with error: %v", hostnameHash[:2], err)
+		return errMac
+	}
+	macString2, err := strconv.ParseInt(hostnameHash[2:4], 16, 0)
+	if err != nil {
+		fmt.Printf("Parsing \"%s\" failed with error: %v", hostnameHash[2:4], err)
+		return errMac
+	}
+	randbuf[1] = byte(macString1)
+	randbuf[2] = byte(macString2)
+	copy(hw, randbuf)
+	return hw.String()
 }
