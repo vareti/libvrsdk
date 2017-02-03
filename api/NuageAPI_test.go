@@ -996,7 +996,7 @@ func TestSplitActivation(t *testing.T) {
 	containerInterface := vspk.NewContainerInterface()
 	containerInterface.Name = vportName
 	containerInterface.MAC = macAddress
-	containerInterface.NetworkID = subnet.ID
+	containerInterface.AttachedNetworkID = subnet.ID
 	interfaceList := make([]interface{}, 1)
 	interfaceList[0] = containerInterface
 	// create a new container under a user
@@ -1013,15 +1013,15 @@ func TestSplitActivation(t *testing.T) {
 	containerInfo["name"] = containerName
 	containerInfo["mac"] = macAddress
 	containerInfo["vmuuid"] = containerUUID
-	containerInfo["brport"] = vportName
-	containerInfo["entityport"] = fmt.Sprintf("vethentity-%d", rand.New(rand.NewSource(time.Now().UnixNano())).Intn(100))
-	portList := []string{containerInfo["entityport"], containerInfo["brport"]}
+	containerInfo["entityport"] = vportName
+	containerInfo["brport"] = fmt.Sprintf("vethentity-%d", rand.New(rand.NewSource(time.Now().UnixNano())).Intn(100))
+	portList := []string{containerInfo["brport"], containerInfo["entityport"]}
 	if err := util.CreateVETHPair(portList); err != nil {
 		t.Fatal("Unable to create veth pairs on VRS")
 	}
 
 	// Add the paired veth port to alubr0 on VRS
-	if err := util.AddVETHPortToVRS(containerInfo["brport"], containerInfo["vmuuid"], containerInfo["name"]); err != nil {
+	if err := util.AddVETHPortToVRS(containerInfo["entityport"], containerInfo["vmuuid"], containerInfo["name"]); err != nil {
 		t.Fatal("Unable to add veth port to alubr0")
 	}
 
@@ -1029,13 +1029,13 @@ func TestSplitActivation(t *testing.T) {
 		t.Fatal("Unable to create a test VM")
 	}
 
-	portInfo, err1 := getPortInfo(vrsConnection, vportName)
+	portInfo, err1 := getPortInfo(vrsConnection, containerInfo["entityport"])
 	if err1 != nil {
 		t.Errorf("Getting port info failed with error : %v", err1)
 	}
 
 	if portInfo.IPAddr != containerInterface.IPAddress {
-		t.Fatalf("Container IP address does not match in port table")
+		t.Errorf("Container IP address does not match in port table")
 	}
 
 	if err := cleanup(vrsConnection, containerInfo); err != nil {
