@@ -90,16 +90,16 @@ func execCMDOnRemoteHost(cmd string, host string) error {
 // port information
 func getPortInfo(vrsConnection VRSConnection, port string) (*PortIPv4Info, error) {
 
-        portInfoUpdateChan := make(chan *PortIPv4Info)
-        vrsConnection.RegisterForPortUpdates(port, portInfoUpdateChan)
-        ticker := time.NewTicker(time.Duration(10) * time.Second)
-        portInfo := &PortIPv4Info{}
-        select {
-        case portInfo = <-portInfoUpdateChan:
-                return portInfo, nil
-        case <-ticker.C:
-                return portInfo, fmt.Errorf("Unable to obtain port information from VRS")
-        }
+	portInfoUpdateChan := make(chan *PortIPv4Info)
+	vrsConnection.RegisterForPortUpdates(port, portInfoUpdateChan)
+	ticker := time.NewTicker(time.Duration(10) * time.Second)
+	portInfo := &PortIPv4Info{}
+	select {
+	case portInfo = <-portInfoUpdateChan:
+		return portInfo, nil
+	case <-ticker.C:
+		return portInfo, fmt.Errorf("Unable to obtain port information from VRS")
+	}
 }
 
 // cleanup will be a template to perform post
@@ -556,11 +556,11 @@ func TestVMHotNICAdd(t *testing.T) {
 		t.Fatal("Unable to create a test VM")
 	}
 
-        // Obtaining entity port information from VRS using update mechanism
-        portInfo, err := getPortInfo(vrsConnection, vmInfo["entityport"])
-        if err != nil {
-                t.Fatal("Unable to obtain an IP address for the VM from VRS")
-        }
+	// Obtaining entity port information from VRS using update mechanism
+	portInfo, err := getPortInfo(vrsConnection, vmInfo["entityport"])
+	if err != nil {
+		t.Fatal("Unable to obtain an IP address for the VM from VRS")
+	}
 
 	portIPOnVSD, vsdError := util.VerifyVSDPortResolution(Root, Enterprise, Domain, Zone, vmInfo["entityport"])
 	if vsdError != nil || portIPOnVSD == "" || portIPOnVSD == "0.0.0.0" {
@@ -619,11 +619,11 @@ func TestVMHotNICAdd(t *testing.T) {
 		t.Fatal("Unable to add Port to entity")
 	}
 
-        // Obtaining entity port information from VRS using update mechanism
-        portInfo, err = getPortInfo(vrsConnection, hotNICEntityPort)
-        if err != nil {
-                t.Fatal("Unable to obtain an IP address for the VM from VRS")
-        }
+	// Obtaining entity port information from VRS using update mechanism
+	portInfo, err = getPortInfo(vrsConnection, hotNICEntityPort)
+	if err != nil {
+		t.Fatal("Unable to obtain an IP address for the VM from VRS")
+	}
 
 	// Verifying port got an IP on VSD
 	hotNICIPOnVSD, vsdError := util.VerifyVSDPortResolution(Root, Enterprise, Domain, Zone, hotNICEntityPort)
@@ -723,11 +723,11 @@ func TestVMReconfigure(t *testing.T) {
 		t.Fatal("Unable to create a test VM")
 	}
 
-        // Obtaining entity port information from VRS using update mechanism
-        portInfo, err := getPortInfo(vrsConnection, vmInfo["entityport"])
-        if err != nil {
-                t.Fatal("Unable to obtain an IP address for the VM from VRS")
-        }
+	// Obtaining entity port information from VRS using update mechanism
+	portInfo, err := getPortInfo(vrsConnection, vmInfo["entityport"])
+	if err != nil {
+		t.Fatal("Unable to obtain an IP address for the VM from VRS")
+	}
 
 	// Verifying port got an IP on VSD
 	portIPOnVSD, vsdError := util.VerifyVSDPortResolution(Root, Enterprise, Domain, Zone, vmInfo["entityport"])
@@ -876,11 +876,11 @@ func TestVMPowerOff(t *testing.T) {
 		t.Fatal("Unable to create a test VM")
 	}
 
-        // Obtaining entity port information from VRS using update mechanism
-        portInfo, err := getPortInfo(vrsConnection, vmInfo["entityport"])
-        if err != nil {
-                t.Fatal("Unable to obtain an IP address for the VM from VRS")
-        }
+	// Obtaining entity port information from VRS using update mechanism
+	portInfo, err := getPortInfo(vrsConnection, vmInfo["entityport"])
+	if err != nil {
+		t.Fatal("Unable to obtain an IP address for the VM from VRS")
+	}
 
 	// Verifying port got an IP on VSD
 	portIPOnVSD, vsdError := util.VerifyVSDPortResolution(Root, Enterprise, Domain, Zone, vmInfo["entityport"])
@@ -957,5 +957,93 @@ func TestVMPowerOff(t *testing.T) {
 		t.Fatal("Unable to delete veth pairs as a part of cleanup on VRS")
 	}
 
+	vrsConnection.Disconnect()
+}
+
+//TestSplitActivation tests the split activation mode using SDK
+func TestSplitActivation(t *testing.T) {
+	vrsConnection, err1 := NewUnixSocketConnection(UnixSocketFile)
+	if err1 != nil {
+		t.Fatal("Unable to connect to the VRS")
+	}
+	enterpriseFetchingInfo := &bambou.FetchingInfo{Filter: "name == \"" + Enterprise + "\""}
+	enterprises, err := Root.Enterprises(enterpriseFetchingInfo)
+	if err != nil || len(enterprises) == 0 {
+		t.Fatalf("%v", err)
+	}
+	enterprise := enterprises[0]
+
+	domainFetchingInfo := &bambou.FetchingInfo{Filter: "name == \"" + Domain + "\""}
+	domains, err := enterprise.Domains(domainFetchingInfo)
+	if err != nil || len(domains) == 0 {
+		t.Fatalf("%v", err)
+	}
+	domain := domains[0]
+
+	subnetFetchingInfo := &bambou.FetchingInfo{Filter: "name == \"" + Network1 + "\""}
+	subnets, err := domain.Subnets(subnetFetchingInfo)
+	if err != nil || len(subnets) == 0 {
+		t.Fatalf("%v", err)
+	}
+	subnet := subnets[0]
+
+	vportName := fmt.Sprintf("vethbr-%d", rand.New(rand.NewSource(time.Now().UnixNano())).Intn(100))
+	containerName := fmt.Sprintf("test_container_%d", rand.New(rand.NewSource(time.Now().UnixNano())).Intn(100))
+	containerUUID := strings.Replace(uuid.Generate().String(), "-", "", -1)
+	containerUUID = containerUUID + strings.Replace(uuid.Generate().String(), "-", "", -1)
+	macAddress := util.GenerateMAC()
+	// new container interface that matches to vport
+	containerInterface := vspk.NewContainerInterface()
+	containerInterface.Name = vportName
+	containerInterface.MAC = macAddress
+	containerInterface.NetworkID = subnet.ID
+	interfaceList := make([]interface{}, 1)
+	interfaceList[0] = containerInterface
+	// create a new container under a user
+	container := vspk.NewContainer()
+	container.UUID = containerUUID
+	container.Name = containerName
+	container.Interfaces = interfaceList
+	err = Root.CreateContainer(container)
+	if err != nil {
+		t.Fatalf("Creating container failed with error: %v", err)
+	}
+
+	containerInfo := make(map[string]string)
+	containerInfo["name"] = containerName
+	containerInfo["mac"] = macAddress
+	containerInfo["vmuuid"] = containerUUID
+	containerInfo["brport"] = vportName
+	containerInfo["entityport"] = fmt.Sprintf("vethentity-%d", rand.New(rand.NewSource(time.Now().UnixNano())).Intn(100))
+	portList := []string{containerInfo["entityport"], containerInfo["brport"]}
+	if err := util.CreateVETHPair(portList); err != nil {
+		t.Fatal("Unable to create veth pairs on VRS")
+	}
+
+	// Add the paired veth port to alubr0 on VRS
+	if err := util.AddVETHPortToVRS(containerInfo["brport"], containerInfo["vmuuid"], containerInfo["name"]); err != nil {
+		t.Fatal("Unable to add veth port to alubr0")
+	}
+
+	if err := createVM(vrsConnection, containerInfo, entity.Container, entity.EventCategoryStarted, entity.EventStartedBooted); err != nil {
+		t.Fatal("Unable to create a test VM")
+	}
+
+	portInfo, err1 := getPortInfo(vrsConnection, vportName)
+	if err1 != nil {
+		t.Errorf("Getting port info failed with error : %v", err1)
+	}
+
+	if portInfo.IPAddr != containerInterface.IPAddress {
+		t.Fatalf("Container IP address does not match in port table")
+	}
+
+	if err := cleanup(vrsConnection, containerInfo); err != nil {
+		t.Fatalf("cleanup failed with error: %v", err)
+	}
+	err = container.Delete()
+	if err != nil {
+		t.Fatalf("Container deletion failed with error: %v", err)
+	}
 	vrsConnection.Disconnect()
 }
